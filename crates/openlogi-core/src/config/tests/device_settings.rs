@@ -285,6 +285,40 @@ fn a_keep_os_layout_opt_out_survives_route_adoption() {
 }
 
 #[test]
+fn gesture_haptics_default_on_and_roundtrip_per_device() {
+    let mut cfg = Config::default();
+    // On for any device until the user turns it off, as in Logi Options+.
+    assert!(cfg.gesture_haptics("mouse"));
+    let body = toml::to_string_pretty(&cfg).expect("serialize");
+    assert!(
+        !body.contains("gesture_haptics"),
+        "unset is omitted: {body}"
+    );
+    cfg.set_gesture_haptics("mouse", false);
+    let body = toml::to_string_pretty(&cfg).expect("serialize");
+    assert!(body.contains("gesture_haptics = false"), "{body}");
+    let restored = write_and_read(&cfg);
+    assert!(!restored.gesture_haptics("mouse"));
+    assert!(restored.gesture_haptics("absent"));
+    cfg.set_gesture_haptics("mouse", true);
+    assert!(write_and_read(&cfg).gesture_haptics("mouse"));
+}
+
+#[test]
+fn a_gesture_haptics_opt_out_survives_route_adoption() {
+    let route = "receiver:82839805:slot:2";
+    let mut config = Config::default();
+    config.set_gesture_haptics(route, false);
+    let canonical = crate::device_order::PhysicalDeviceKey::parse("unit:4f4c4403").expect("valid");
+    assert!(config.adopt_route(&canonical, route, None));
+    assert!(
+        !config.devices.contains_key(route),
+        "sanity: the route entry folded"
+    );
+    assert!(!config.gesture_haptics("unit:4f4c4403"));
+}
+
+#[test]
 fn report_rate_roundtrips_per_device_in_hertz() {
     use crate::hid::ReportRate;
 

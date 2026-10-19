@@ -318,6 +318,7 @@ pub(super) fn fold(device: &mut DeviceConfig, mut legacy: DeviceConfig, route_ke
     fold_option_field!(thumbwheel_sensitivity);
     fold_option_field!(fn_lock);
     fold_option_field!(keep_os_layout);
+    fold_option_field!(gesture_haptics);
     fold_option_field!(report_rate);
     // The user-assigned alias. Without this a legacy entry carrying a name
     // folded into a canonical entry with none would drop it silently — the

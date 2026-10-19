@@ -209,6 +209,11 @@ pub struct DeviceConfig {
     /// Host-rendered Actions Ring settings and complete per-application layouts.
     #[serde(default, skip_serializing_if = "ActionRingConfig::is_default")]
     pub action_ring: ActionRingConfig,
+    /// Play a haptic pulse when a gesture runs its action, as Logi Options+
+    /// does on devices with programmable haptics (HID++ `0x19b0`). `None`
+    /// means "never set", which is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gesture_haptics: Option<bool>,
     /// Ordered list of DPI presets cycled through by
     /// [`Action::CycleDpiPresets`] and indexed by
     /// [`Action::SetDpiPreset`]. Empty means "no presets configured" —
@@ -392,6 +397,7 @@ impl Default for DeviceConfig {
             disabled_gestures: BTreeMap::new(),
             per_app_bindings: BTreeMap::new(),
             action_ring: ActionRingConfig::default(),
+            gesture_haptics: None,
             dpi_presets: Vec::new(),
             dpi: None,
             lighting: None,
@@ -502,6 +508,8 @@ struct RawDeviceConfig {
     per_app_bindings: BTreeMap<String, BTreeMap<ButtonId, Action>>,
     #[serde(default)]
     action_ring: ActionRingConfig,
+    #[serde(default)]
+    gesture_haptics: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_dpi_presets")]
     dpi_presets: Vec<Dpi>,
     #[serde(default, deserialize_with = "deserialize_optional_dpi")]
@@ -581,6 +589,7 @@ impl From<RawDeviceConfig> for DeviceConfig {
             disabled_gestures: raw.disabled_gestures,
             per_app_bindings: raw.per_app_bindings,
             action_ring: raw.action_ring,
+            gesture_haptics: raw.gesture_haptics,
             dpi_presets: raw.dpi_presets,
             dpi: raw.dpi,
             lighting: raw.lighting,

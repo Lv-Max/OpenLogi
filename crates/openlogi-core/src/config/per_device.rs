@@ -70,6 +70,24 @@ impl Config {
             .haptics = enabled;
     }
 
+    /// Whether a gesture on `device_key` plays a haptic pulse when it runs
+    /// its action. On unless the user turned it off, as in Logi Options+.
+    #[must_use]
+    pub fn gesture_haptics(&self, device_key: &str) -> bool {
+        self.devices
+            .get(device_key)
+            .and_then(|d| d.gesture_haptics)
+            .unwrap_or(true)
+    }
+
+    /// Enable or disable `device_key`'s gesture haptics.
+    pub fn set_gesture_haptics(&mut self, device_key: &str, enabled: bool) {
+        self.devices
+            .entry(device_key.to_string())
+            .or_default()
+            .gesture_haptics = Some(enabled);
+    }
+
     /// Replace or clear one slot in the default Actions Ring layout.
     pub fn set_action_ring_slot(
         &mut self,
