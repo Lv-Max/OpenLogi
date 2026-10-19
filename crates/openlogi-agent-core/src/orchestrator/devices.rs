@@ -99,6 +99,20 @@ pub(super) fn wheel_inverted(config: &Config, dev: &AgentDevice) -> bool {
     }
 }
 
+/// Where `dev` plays haptic feedback the user left `enabled`: its route,
+/// while it is online and advertises programmable haptics (HID++ `0x19b0`).
+/// Shared by the Actions Ring and gestures, so the two agree on which
+/// devices can buzz.
+pub(super) fn haptic_route(dev: &AgentDevice, enabled: bool) -> Option<DeviceRoute> {
+    (enabled
+        && dev.online
+        && dev
+            .capabilities
+            .is_some_and(|capabilities| capabilities.haptic_feedback))
+    .then(|| dev.route.clone())
+    .flatten()
+}
+
 /// The saved report rate to push to `dev`: only to a device with a
 /// report-rate feature, so a rate saved for a mouse is never written to
 /// whatever later answers under the same key without one.

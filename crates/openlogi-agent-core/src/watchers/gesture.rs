@@ -28,8 +28,8 @@ use std::sync::Arc;
 use openlogi_core::device_order::PhysicalDeviceKey;
 use openlogi_core::scroll::ScrollDelta;
 use openlogi_hid::{
-    CaptureHost, CaptureSessionOutcome, CaptureSessionStop, CapturedInput, PendingCaptureRestore,
-    run_capture_session,
+    CaptureHost, CaptureSessionOutcome, CaptureSessionStop, CapturedInput, DeviceRoute,
+    PendingCaptureRestore, run_capture_session,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::Instant;
@@ -49,12 +49,27 @@ use crate::runtime::hook::SharedHookMaps;
 use crate::runtime::scroll::ScrollInputHandle;
 use crate::runtime::{ActionDispatcher, HidppSessionId};
 
+/// Haptic feedback for a gesture that ran its action.
+///
+/// The agent backs this with the haptic worker the Actions Ring plays
+/// through, so gesture and ring pulses share one single-flight queue instead
+/// of competing for the same HID++ channel.
+pub trait GestureHaptics: Send + Sync {
+    /// Re-assert the device's firmware haptic engine before a capture
+    /// session's first pulse: power transitions can clear it, after which
+    /// plays are accepted without feedback.
+    fn arm(&self, route: &DeviceRoute);
+    /// Play the gesture pulse on `route`.
+    fn play(&self, route: &DeviceRoute);
+}
+
 /// Output capabilities shared by every HID++ gesture capture session.
 #[derive(Clone)]
 pub struct GestureOutputs {
     actions: ActionDispatcher,
     scroll: ScrollInputHandle,
     hook_maps: SharedHookMaps,
+    haptics: Option<Arc<dyn GestureHaptics>>,
 }
 
 impl GestureOutputs {
@@ -69,7 +84,16 @@ impl GestureOutputs {
             actions,
             scroll,
             hook_maps,
+            haptics: None,
         }
+    }
+
+    /// Play gesture haptics through `haptics`. Without it, gestures run
+    /// their actions silently.
+    #[must_use]
+    pub fn with_haptics(mut self, haptics: Arc<dyn GestureHaptics>) -> Self {
+        self.haptics = Some(haptics);
+        self
     }
 
     fn cancel_session(&self, session: &HidppSessionId) {
@@ -226,6 +250,7 @@ fn same_bindings(a: &DispatchPlan, b: &DispatchPlan) -> bool {
         thumbwheel_sensitivity,
         invert_wheel,
         pointer_target: _,
+        gesture_haptic_route,
     } = a;
     *config_key == b.config_key
         && *bindings == b.bindings
@@ -233,6 +258,7 @@ fn same_bindings(a: &DispatchPlan, b: &DispatchPlan) -> bool {
         && *side_gesture_bindings == b.side_gesture_bindings
         && *thumbwheel_sensitivity == b.thumbwheel_sensitivity
         && *invert_wheel == b.invert_wheel
+        && *gesture_haptic_route == b.gesture_haptic_route
 }
 
 fn reconcile_session(

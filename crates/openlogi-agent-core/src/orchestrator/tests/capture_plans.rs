@@ -69,6 +69,49 @@ fn published_plans_carry_the_held_wheel_inversion_of_the_link() {
     assert!(plan.dispatch.invert_wheel);
 }
 
+/// A device with programmable haptics gets a gesture haptic route until the
+/// user turns gesture haptics off; one without them never does.
+#[test]
+fn published_plans_route_gesture_haptics_to_capable_devices() {
+    fn gesture_haptic_route(orch: &Orchestrator) -> Option<DeviceRoute> {
+        let published = orch.shared.capture_plans.borrow();
+        published
+            .plans()
+            .first()
+            .expect("the online device is planned")
+            .dispatch
+            .gesture_haptic_route
+            .clone()
+    }
+
+    fn planned(haptic_feedback: bool, config: Config) -> Orchestrator {
+        let mut device = dev("a", 1, true);
+        device.capabilities = Some(Capabilities {
+            haptic_feedback,
+            ..Capabilities::default()
+        });
+        let mut orch = orchestrator(config);
+        orch.devices = vec![device];
+        orch.rebuild();
+        orch
+    }
+
+    let mut orch = planned(true, Config::default());
+    let route = orch.devices[0].route.clone();
+    assert!(route.is_some(), "sanity: the online device has a route");
+    assert_eq!(gesture_haptic_route(&orch), route);
+
+    let mut config = Config::default();
+    config.set_gesture_haptics("a", false);
+    orch.reload_config(config);
+    assert_eq!(gesture_haptic_route(&orch), None);
+
+    assert_eq!(
+        gesture_haptic_route(&planned(false, Config::default())),
+        None
+    );
+}
+
 /// A smooth-wheel device's published plan asks its session to divert the
 /// wheel once the hook may post the scrolling, and leaves it native again
 /// when the hook goes away.

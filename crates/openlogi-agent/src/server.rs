@@ -15,6 +15,7 @@ use openlogi_agent_core::event_monitor::SharedEventMonitor;
 use openlogi_agent_core::observable::ObservableState;
 use openlogi_agent_core::orchestrator::{self, Orchestrator, SharedHandles};
 use openlogi_agent_core::runtime::ActionDispatcher;
+use openlogi_agent_core::watchers::gesture::GestureHaptics;
 use openlogi_core::binding::ActionRingSlot;
 use openlogi_core::config::{ConfigFile, Lighting};
 use openlogi_core::device::DeviceInventory;
@@ -54,7 +55,7 @@ pub struct AgentServer {
     pub event_monitor: SharedEventMonitor,
     pub action_ring: Arc<ActionRingManager>,
     pub dispatcher: ActionDispatcher,
-    pub ring_haptics: RingHapticPlayer,
+    pub haptics: HapticPlayer,
     pub backlight_overlay: BacklightOverlayManager,
     /// Forwards each connection's [`ClientKind`] declaration to the
     /// dormancy gate.
@@ -62,7 +63,7 @@ pub struct AgentServer {
 }
 
 impl AgentServer {
-    /// Build a server and start the coalescing Actions Ring haptic worker.
+    /// Build a server and start the coalescing haptic worker.
     /// The second return is the demand channel the dormancy gate drains.
     #[expect(
         clippy::too_many_arguments,
@@ -78,7 +79,7 @@ impl AgentServer {
         dispatcher: ActionDispatcher,
         backlight_overlay: BacklightOverlayManager,
     ) -> (Self, tokio::sync::mpsc::UnboundedReceiver<ClientKind>) {
-        let ring_haptics = RingHapticPlayer::spawn(shared.clone());
+        let haptics = HapticPlayer::spawn(shared.clone());
         let (demand, declarations) = tokio::sync::mpsc::unbounded_channel();
         (
             Self {
@@ -89,7 +90,7 @@ impl AgentServer {
                 event_monitor,
                 action_ring,
                 dispatcher,
-                ring_haptics,
+                haptics,
                 backlight_overlay,
                 demand,
             },
@@ -443,7 +444,7 @@ impl Agent for AgentServer {
         slot: ActionRingSlot,
     ) -> Result<(), ActionRingCommandError> {
         if let Some(hover) = self.action_ring.hover(session_id, slot)? {
-            self.ring_haptics
+            self.haptics
                 .play(hover.haptic_route, HapticWaveform::SubtleCollision, "hover");
         }
         Ok(())
@@ -458,7 +459,7 @@ impl Agent for AgentServer {
         let activation = self.action_ring.activate(session_id, slot)?;
         self.dispatcher
             .dispatch(&activation.action, Some(&activation.device_key));
-        self.ring_haptics.play(
+        self.haptics.play(
             activation.haptic_route,
             HapticWaveform::DampStateChange,
             "activation",
@@ -471,8 +472,9 @@ impl Agent for AgentServer {
     }
 }
 
-/// Coalescing Actions Ring haptic player: at most one waveform is in flight,
-/// and while it plays only the newest queued request survives (latest wins).
+/// Coalescing haptic player for the Actions Ring and gestures: at most one
+/// waveform is in flight, and while it plays only the newest queued request
+/// survives (latest wins).
 ///
 /// Spawning one task per hover let a fast pointer queue HID++ plays faster
 /// than the receiver drains them; the backlog then times out every
@@ -481,7 +483,7 @@ impl Agent for AgentServer {
 /// receiver. A stale hover buzz has no value, so dropping superseded requests
 /// is strictly better than queueing them.
 #[derive(Clone)]
-pub struct RingHapticPlayer {
+pub struct HapticPlayer {
     tx: tokio::sync::watch::Sender<Option<(DeviceRoute, HapticWaveform, &'static str)>>,
     pending_arm: Arc<std::sync::Mutex<Option<DeviceRoute>>>,
 }
@@ -559,10 +561,7 @@ async fn play_within_budget(
     let budget = Budget::starting_at(Instant::now(), PLAY_BUDGET);
     for attempt in 1..=3u8 {
         let Some(remaining) = budget.remaining(Instant::now()) else {
-            warn!(
-                interaction,
-                "ring haptic gave up — out of time to be feedback"
-            );
+            warn!(interaction, "haptic gave up — out of time to be feedback");
             return PlayOutcome::Failed;
         };
         match tokio::time::timeout(
@@ -578,13 +577,13 @@ async fn play_within_budget(
             Ok(Ok(())) => return PlayOutcome::Played,
             Ok(Err(error)) if !is_worth_retrying(&error) => {
                 // Nothing was sent, and every hover asks again: no warning.
-                debug!(%error, interaction, "Actions Ring haptic skipped");
+                debug!(%error, interaction, "haptic skipped");
                 return PlayOutcome::Skipped;
             }
             Ok(Err(error)) => {
                 let superseded = rx.has_changed().unwrap_or(true);
                 if attempt == 3 || superseded {
-                    warn!(%error, interaction, attempt, superseded, "Actions Ring haptic failed");
+                    warn!(%error, interaction, attempt, superseded, "haptic failed");
                     return PlayOutcome::Failed;
                 }
             }
@@ -695,7 +694,7 @@ impl Budget {
     }
 }
 
-impl RingHapticPlayer {
+impl HapticPlayer {
     /// Spawn the single-flight worker. Must be called from a tokio runtime.
     pub fn spawn(shared: SharedHandles) -> Self {
         let (tx, mut rx) = tokio::sync::watch::channel::<
@@ -734,7 +733,7 @@ impl RingHapticPlayer {
                 if breaker.record(outcome, Instant::now()) {
                     info!(
                         interaction,
-                        "ring haptics cooling down after repeated HID++ loss"
+                        "haptics cooling down after repeated HID++ loss"
                     );
                 }
             }
@@ -766,6 +765,23 @@ impl RingHapticPlayer {
             return;
         };
         let _ = self.tx.send(Some((route, waveform, interaction)));
+    }
+}
+
+/// Gestures pulse with the confirmation waveform the ring plays when it runs
+/// an action: a gesture that runs its action is the same event.
+impl GestureHaptics for HapticPlayer {
+    fn arm(&self, route: &DeviceRoute) {
+        HapticPlayer::arm(self, Some(route.clone()));
+    }
+
+    fn play(&self, route: &DeviceRoute) {
+        HapticPlayer::play(
+            self,
+            Some(route.clone()),
+            HapticWaveform::DampStateChange,
+            "gesture",
+        );
     }
 }
 

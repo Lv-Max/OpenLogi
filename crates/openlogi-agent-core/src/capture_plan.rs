@@ -76,6 +76,11 @@ pub struct DispatchPlan {
     /// Pointer identity used to select these mouse bindings; absent for the
     /// explicitly focused policy and keyboard input.
     pub pointer_target: Option<openlogi_hook::PointerTarget>,
+    /// Where a gesture that runs its action plays its haptic pulse; `None`
+    /// when the device has no programmable haptics or the user turned
+    /// gesture haptics off. Needs the device's capabilities, which
+    /// [`plan_for_device`] cannot see: the orchestrator fills it in.
+    pub gesture_haptic_route: Option<DeviceRoute>,
 }
 
 /// One device's independently versioned hardware target and dispatch plan.
@@ -334,6 +339,7 @@ pub fn plan_for_device(
             thumbwheel_sensitivity,
             invert_wheel: false,
             pointer_target: None,
+            gesture_haptic_route: None,
         },
     }
 }

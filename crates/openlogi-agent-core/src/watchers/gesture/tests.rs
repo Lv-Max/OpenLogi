@@ -851,3 +851,129 @@ async fn a_pointer_only_plan_refresh_keeps_a_held_gesture() {
     scroll.shutdown();
     actions.shutdown();
 }
+
+/// Records every haptic call in order, as `"arm"` or `"play"`.
+#[derive(Default)]
+struct RecordingHaptics(std::sync::Mutex<Vec<&'static str>>);
+
+impl RecordingHaptics {
+    fn take(&self) -> Vec<&'static str> {
+        std::mem::take(&mut *self.0.lock().unwrap())
+    }
+}
+
+impl GestureHaptics for RecordingHaptics {
+    fn arm(&self, _: &DeviceRoute) {
+        self.0.lock().unwrap().push("arm");
+    }
+
+    fn play(&self, _: &DeviceRoute) {
+        self.0.lock().unwrap().push("play");
+    }
+}
+
+#[tokio::test]
+async fn a_gesture_that_runs_its_action_pulses_the_device() {
+    use crate::runtime::scroll::{ScrollPreferences, ScrollRuntime};
+
+    let (_signal, device_io) = openlogi_hid::device_io_channel();
+    let (ring, _ring_rx) = mpsc::unbounded_channel();
+    let device_access = DeviceAccess {
+        channel: CaptureChannelSlot::default(),
+        registry: openlogi_hid::ChannelRegistry::default(),
+        receiver_access: ReceiverAccess::default(),
+        device_io,
+        transport_turns: crate::hardware::TransportTurns::default(),
+    };
+    let mut actions =
+        crate::runtime::ActionRuntime::new(Arc::default(), device_access, ring).unwrap();
+    let mut scroll = ScrollRuntime::spawn(Arc::new(ScrollPreferences::new(
+        false,
+        VerticalScrollSensitivity::default(),
+    )))
+    .unwrap();
+    let haptics = Arc::new(RecordingHaptics::default());
+    let mut dispatcher = InputDispatcher::new(
+        GestureOutputs::new(actions.dispatcher(), scroll.input(), Arc::default())
+            .with_haptics(haptics.clone()),
+    );
+
+    // `ShowActionsRing` stays in-process, so the test posts no real input.
+    let mut plan = plan();
+    plan.dispatch.gesture_bindings.insert(
+        ButtonId::GestureButton,
+        [
+            (GestureDirection::Left, Action::ShowActionsRing),
+            (GestureDirection::Right, Action::None),
+            (GestureDirection::Click, Action::ShowActionsRing),
+        ]
+        .into(),
+    );
+    plan.dispatch.gesture_haptic_route = Some(route());
+    let gesture = |dispatcher: &mut InputDispatcher, id: &HidppSessionId, input| {
+        dispatcher.dispatch(id, &plan.dispatch, input);
+    };
+
+    let first = session_id(7);
+    gesture(
+        &mut dispatcher,
+        &first,
+        CapturedInput::ButtonDown(ButtonId::GestureButton),
+    );
+    gesture(
+        &mut dispatcher,
+        &first,
+        CapturedInput::Gesture(ButtonId::GestureButton, GestureDirection::Left),
+    );
+    assert_eq!(
+        haptics.take(),
+        ["arm", "play"],
+        "the session's first pulse arms"
+    );
+    gesture(
+        &mut dispatcher,
+        &first,
+        CapturedInput::Gesture(ButtonId::GestureButton, GestureDirection::Left),
+    );
+    assert_eq!(haptics.take(), ["play"], "a chained swipe only plays");
+    gesture(
+        &mut dispatcher,
+        &first,
+        CapturedInput::Gesture(ButtonId::GestureButton, GestureDirection::Right),
+    );
+    gesture(
+        &mut dispatcher,
+        &first,
+        CapturedInput::Gesture(ButtonId::GestureButton, GestureDirection::Click),
+    );
+    assert!(
+        haptics.take().is_empty(),
+        "an unbound direction and a click stay silent"
+    );
+
+    // A new capture session — a reconnect or wake — arms again.
+    let second = session_id(8);
+    gesture(
+        &mut dispatcher,
+        &second,
+        CapturedInput::ButtonDown(ButtonId::GestureButton),
+    );
+    gesture(
+        &mut dispatcher,
+        &second,
+        CapturedInput::Gesture(ButtonId::GestureButton, GestureDirection::Left),
+    );
+    assert_eq!(haptics.take(), ["arm", "play"]);
+
+    // No route — no haptics on the device, or the user turned them off.
+    plan.dispatch.gesture_haptic_route = None;
+    dispatcher.dispatch(
+        &second,
+        &plan.dispatch,
+        CapturedInput::Gesture(ButtonId::GestureButton, GestureDirection::Left),
+    );
+    assert!(haptics.take().is_empty());
+
+    scroll.shutdown();
+    actions.shutdown();
+}

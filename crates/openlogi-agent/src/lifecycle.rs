@@ -234,7 +234,7 @@ impl Wanted {
             event_monitor,
             inputs,
             backlight_overlay,
-            ring_haptics,
+            haptics,
             demand,
         } = core;
         // Closing the channel turns post-arming declarations into no-ops in
@@ -248,7 +248,7 @@ impl Wanted {
                 event_monitor,
                 inputs,
                 backlight_overlay,
-                ring_haptics,
+                haptics,
                 signals,
                 shutdown_requests,
                 hidpp_watchers: WatcherFleet::Inactive,
@@ -275,7 +275,7 @@ struct Running {
     event_monitor: Arc<EventMonitor>,
     inputs: InputServices,
     backlight_overlay: BacklightOverlayManager,
-    ring_haptics: server::RingHapticPlayer,
+    haptics: server::HapticPlayer,
     signals: ShutdownSignals,
     shutdown_requests: ShutdownRequests,
     hidpp_watchers: WatcherFleet,
@@ -553,7 +553,7 @@ impl Running {
         {
             // Re-arm the firmware haptic engine first: power transitions can
             // clear it, after which plays are accepted without feedback.
-            self.ring_haptics.arm(session.haptic_route.clone());
+            self.haptics.arm(session.haptic_route.clone());
             self.inputs.ring.begin(session);
         }
     }
@@ -634,8 +634,11 @@ impl Running {
     }
 
     fn restart_hidpp_watchers(&mut self) {
-        self.hidpp_watchers =
-            WatcherFleet::Running(startup::spawn_hidpp_watchers(&self.shared, &self.inputs));
+        self.hidpp_watchers = WatcherFleet::Running(startup::spawn_hidpp_watchers(
+            &self.shared,
+            &self.inputs,
+            &self.haptics,
+        ));
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]

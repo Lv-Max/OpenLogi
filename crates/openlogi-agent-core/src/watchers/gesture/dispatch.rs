@@ -2,11 +2,13 @@
 
 mod wheel;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU8;
 use std::time::Instant;
 
-use openlogi_core::binding::{Action, Binding, ButtonId, HeldWheel, default_binding};
+use openlogi_core::binding::{
+    Action, Binding, ButtonId, GestureDirection, HeldWheel, default_binding,
+};
 use openlogi_core::config::ThumbwheelSensitivity;
 use openlogi_core::scroll::ScrollDelta;
 use openlogi_hid::CapturedInput;
@@ -96,6 +98,24 @@ impl SessionWheels {
     }
 }
 
+/// Capture sessions whose device's haptic engine was armed before their
+/// first gesture pulse. A capture session restarts on reconnect and system
+/// wake — the power transitions that can disarm the engine — so arming once
+/// per session repairs it without a configuration read before every pulse.
+#[derive(Default)]
+struct ArmedHaptics(HashSet<HidppSessionId>);
+
+impl ArmedHaptics {
+    /// Whether `session` still needs arming; records that it no longer does.
+    fn first_pulse(&mut self, session: &HidppSessionId) -> bool {
+        self.0.insert(session.clone())
+    }
+
+    fn cancel_session(&mut self, session: &HidppSessionId) {
+        self.0.remove(session);
+    }
+}
+
 /// Input routing plus the per-session state retained between
 /// captured events. Capture-session lifecycle remains owned by the parent.
 pub(super) struct InputDispatcher {
@@ -103,6 +123,7 @@ pub(super) struct InputDispatcher {
     outputs: GestureOutputs,
     wheels: SessionWheels,
     held_presses: HeldPresses,
+    armed_haptics: ArmedHaptics,
 }
 
 impl InputDispatcher {
@@ -113,6 +134,7 @@ impl InputDispatcher {
             outputs,
             wheels: SessionWheels::default(),
             held_presses: HeldPresses::default(),
+            armed_haptics: ArmedHaptics::default(),
         }
     }
 
@@ -142,6 +164,30 @@ impl InputDispatcher {
         self.outputs.cancel_session(session);
         self.wheels.cancel_session(session);
         self.held_presses.cancel_session(session);
+        self.armed_haptics.cancel_session(session);
+    }
+
+    /// Pulse the device for a gesture that ran its action. A click is left
+    /// alone — the button's own click is already the feedback — and so is a
+    /// direction bound to nothing, which ran no action to confirm.
+    fn gesture_haptic(
+        &mut self,
+        session: &HidppSessionId,
+        plan: &DispatchPlan,
+        direction: GestureDirection,
+        action: &Action,
+    ) {
+        if direction == GestureDirection::Click || *action == Action::None {
+            return;
+        }
+        let (Some(haptics), Some(route)) = (&self.outputs.haptics, &plan.gesture_haptic_route)
+        else {
+            return;
+        };
+        if self.armed_haptics.first_pulse(session) {
+            haptics.arm(route);
+        }
+        haptics.play(route);
     }
 
     /// Route one captured input from `session` to its bound action or
@@ -169,11 +215,13 @@ impl InputDispatcher {
                     .and_then(|map| map.get(&direction))
                 {
                     debug!(key, %button, ?direction, action = %action.label(), "gesture → action");
-                    if !self
+                    if self
                         .outputs
                         .actions
                         .try_dispatch_while_pressed(press, action)
                     {
+                        self.gesture_haptic(session, plan, direction, action);
+                    } else {
                         debug!(key, %button, ?direction, "gesture press no longer active — ignored");
                     }
                 } else {
