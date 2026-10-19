@@ -328,6 +328,32 @@ fn wheel_hold_row(
     )
 }
 
+/// The current device's gesture haptics setting, or `None` when it has no
+/// programmable haptics to switch.
+fn gesture_haptics_setting(cx: &Context<MouseModelView>) -> Option<bool> {
+    let state = AppState::try_read(cx)?;
+    let capabilities = state.current_record()?.capabilities?;
+    capabilities
+        .haptic_feedback
+        .then(|| state.gesture_haptics())
+}
+
+/// The device-wide gesture haptics switch, shown only on a device with
+/// programmable haptics.
+fn gesture_haptics_row(enabled: bool, pal: Palette) -> impl IntoElement {
+    toggle_row(
+        "inspector-gesture-haptics-row",
+        pal,
+        tr!("actions.gesture_haptic_feedback"),
+        tr!("actions.gesture_haptic_feedback_description"),
+        Toggle::new("inspector-gesture-haptics-toggle")
+            .selected(enabled)
+            .on_change(|enabled, _window, cx| {
+                AppState::apply(cx, |state| state.commit_gesture_haptics(*enabled));
+            }),
+    )
+}
+
 fn inherited_gesture_inspector(
     button: ButtonId,
     app: &str,
@@ -421,6 +447,9 @@ fn gesture_inspector(
             pal,
         ))
         .child(current_action_card(&current, picker, pal))
+        .when_some(gesture_haptics_setting(cx), |panel, enabled| {
+            panel.child(gesture_haptics_row(enabled, pal))
+        })
         .when(offer_wheel_hold, |panel| {
             panel.child(wheel_hold_row(button, false, picker.view, pal))
         })

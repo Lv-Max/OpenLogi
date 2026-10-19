@@ -546,6 +546,31 @@ impl AppState {
         events
     }
 
+    /// Whether the current device's gestures pulse its haptics when they run
+    /// their action. Device-wide, like [`Self::wheel_hold_buttons`].
+    #[must_use]
+    pub fn gesture_haptics(&self) -> bool {
+        self.current_record()
+            .and_then(DeviceRecord::persistent_config_key)
+            .is_none_or(|key| self.config.gesture_haptics(key))
+    }
+
+    /// Enable or disable haptic pulses for the current device's gestures.
+    pub fn commit_gesture_haptics(&mut self, enabled: bool) -> StateEvents {
+        let events = self.for_current_device(StateEvent::BindingsChanged);
+        let Some(key) = self
+            .current_record()
+            .and_then(DeviceRecord::persistent_config_key)
+            .map(str::to_string)
+        else {
+            return events;
+        };
+        self.config
+            .edit(|config| config.set_gesture_haptics(&key, enabled));
+        self.persist_and_reload("gesture haptics");
+        events
+    }
+
     /// Update one direction of `button`'s gesture binding in memory, on disk,
     /// and (via reload) in the maps the agent dispatches from.
     pub fn commit_gesture_binding(

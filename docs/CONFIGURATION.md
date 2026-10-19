@@ -117,6 +117,12 @@ Common device fields are:
   **Smooth wheel** when the current connection has `0x2121`; a smooth wheel
   turned on over another connection can still be turned off there. Absent or
   `false` leaves the wheel native
+- `gesture_haptics` for mice with programmable haptics (HID++ `0x19b0`, such
+  as the MX Master 4): absent or `true` pulses the mouse when a gesture swipe
+  runs its action, as Logi Options+ does; `false` keeps gestures silent. A
+  gesture click and a direction bound to `None` never pulse. The desktop's
+  gesture inspector offers it as **Haptic feedback**. It is separate from
+  `action_ring.haptics`, which covers the Actions Ring
 - `bindings`: a button maps to one action, an independent short/long action
   pair, or a gesture-direction map.
   `Thumbwheel` is the thumb wheel's capacitive tap — it has no GUI control and
